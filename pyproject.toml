@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "advassess"
+version = "0.2.0"
+description = "Agent-driven adversarial robustness and AI security assessment"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Advassess contributors" }]
+keywords = ["AI security", "adversarial robustness", "MCP", "machine learning"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=1.24",
+  "PyYAML>=6.0",
+  "scikit-learn>=1.3",
+  "joblib>=1.3",
+  "mcp>=2.0.0",
+  "tomlkit>=0.12",
+]
+
+[project.optional-dependencies]
+art = ["torch>=2.1", "adversarial-robustness-toolbox>=1.17", "matplotlib>=3.7"]
+keras = ["tensorflow>=2.15", "adversarial-robustness-toolbox>=1.17", "matplotlib>=3.7"]
+llm = ["garak"]
+pyrit = ["pyrit"]
+all = ["torch>=2.1", "adversarial-robustness-toolbox>=1.17", "matplotlib>=3.7", "tensorflow>=2.15", "garak"]
+
+[project.scripts]
+advassess = "advassess.cli:main"
+
+[tool.setuptools]
+packages = ["advassess", "advassess.engines"]
+py-modules = ["run", "mcp_server"]
