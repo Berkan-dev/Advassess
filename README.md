@@ -1,4 +1,8 @@
-# Advassess
+<p align="center">
+  <img src="assets/kraken.png" alt="Advassess kraken badge" width="300">
+</p>
+
+<h1 align="center">Advassess</h1>
 
 Advassess tests how easily AI models can be fooled or manipulated, and reports the results. You work with it through an AI
 agent: the agent writes the assessment config, shows you the plan, runs the attacks once you approve, and reads back the report.
@@ -53,7 +57,7 @@ Requires Python 3.10 or newer.
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath          # then open a new terminal
-pipx install "git+https://github.com/Berkan-dev/advassess.git"
+pipx install "git+https://github.com/YOUR-USERNAME/advassess.git"
 advassess doctor
 ```
 
