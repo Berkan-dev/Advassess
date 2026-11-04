@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+from advassess.review import MAX_KEPT_HITS
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _SECRET_WORDS = ("key", "token", "secret", "password", "passwd", "credential", "authorization")
 PROBE_NAME = re.compile(r"^[a-z0-9_]+(\.[A-Za-z0-9_]+)?$")
@@ -125,7 +127,7 @@ def parse_report(report_path: Path, seconds: float, spec: str, n_examples: int) 
                 "passed": d.get("passed", 0), "failed": d.get("fails", 0),
                 "evaluated": d.get("total_evaluated", 0)}
         elif kind == "attempt" and d.get("status") == 2:  # status 2 = detectors have scored it
-            p = probes.setdefault(d["probe_classname"], {"prompts": 0, "outputs": 0, "hits": 0, "examples": []})
+            p = probes.setdefault(d["probe_classname"], {"prompts": 0, "outputs": 0, "hits": 0, "kept": [], "examples": []})
             p["prompts"] += 1
             scores = d.get("detector_results") or {}
             width = max((len(v) for v in scores.values()), default=0)
@@ -137,12 +139,14 @@ def parse_report(report_path: Path, seconds: float, spec: str, n_examples: int) 
                 fired = sorted(det for det, s in vals.items() if s >= HIT_THRESHOLD)
                 if fired:
                     p["hits"] += 1
+                    reply = ((d.get("outputs") or [])[i] or {}).get("text", "") if i < len(d.get("outputs") or []) else ""
+                    hit = {"prompt": _clip(_turns_text(d.get("prompt")), 3000), "response": _clip(reply, 3000),
+                           "detectors": fired, "goal": d.get("goal") or ""}
+                    if len(p["kept"]) < MAX_KEPT_HITS:
+                        p["kept"].append(hit)
                     if len(p["examples"]) < n_examples and i < len(d.get("outputs") or []):
-                        p["examples"].append({
-                            "prompt": _clip(_turns_text(d.get("prompt"))),
-                            "response": _clip((d["outputs"][i] or {}).get("text", "")),
-                            "detectors": fired,
-                            "goal": d.get("goal") or ""})
+                        p["examples"].append({"prompt": _clip(_turns_text(d.get("prompt"))), "response": _clip(reply),
+                                              "detectors": fired, "goal": d.get("goal") or ""})
     rows = []
     for name, p in probes.items():
         rows.append({
@@ -155,6 +159,7 @@ def parse_report(report_path: Path, seconds: float, spec: str, n_examples: int) 
             "detectors": evals.get(name, {}),
             "seconds": round(seconds, 1),
             "examples": p["examples"],
+            "_hits": p["kept"],
             "error": None,
         })
     return rows

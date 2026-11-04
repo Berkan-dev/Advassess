@@ -36,7 +36,10 @@ LLM_LIMITS = [
     "instruction). Detectors make mistakes in both directions, so read the examples before concluding anything.",
     "Language models answer differently from run to run; rates from few prompts or few replies are noisy. "
     "Repeat the scan or raise generations / max_prompts_per_probe before relying on a rate.",
-    "Prompts per probe are capped (see max_prompts_per_probe and samples), so a probe may be only partly run.",
+    "A result labelled 'inconclusive' has too few independent prompts or attempts to bound the failure rate (see its 95% "
+    "interval); zero failures there is not evidence of safety.",
+    "Flagged replies are verified by a reviewer model when one is configured; 'unverified' flags are the detector's word "
+    "alone and may be false positives. Reviewer models make mistakes too, so read the examples.",
     "Probes are single prompts or scripted conversations; a determined human or an adaptive attacker may do better.",
     "Adaptive (PyRIT) attacks depend on the attacker and judge models you choose: a weak attacker underestimates "
     "the risk, and a judge can mislabel a transcript. Read the transcripts.",
@@ -56,19 +59,23 @@ def _params(p: dict) -> str:
 
 
 def _format_llm_table(results: list[dict]) -> str:
-    headers = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Detectors", "Run sec"]
+    headers = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Verdict", "Detectors", "Run sec"]
     rows, errors = [], []
     for r in results:
         if r["error"]:
-            rows.append([r["attack"], "ERROR", "see below", "", "", "", ""])
+            rows.append([r["attack"], "ERROR", "see below", "", "", "", "", ""])
             errors.append(f"  {r['attack']}: {r['error']}")
             continue
-        rows.append([r["attack"], r["n_prompts"], r["n_samples"], r["failed"], _pct(r["attack_success_rate"]),
+        inconclusive = r.get("verdict") == "inconclusive"
+        rows.append([r["attack"], r["n_prompts"], r["n_samples"], r["failed"],
+                     "inconclusive" if inconclusive else _pct(r["attack_success_rate"]), r.get("verdict", "-"),
                      ", ".join(r["detectors"]) or "-", r["seconds"]])
     widths = [max(len(str(c)) for c in col) for col in zip(headers, *rows)]
     line = lambda cells: "  ".join(str(c).ljust(w) for c, w in zip(cells, widths))
     table = "\n".join([line(headers), line(["-" * w for w in widths])] + [line(r) for r in rows])
-    return table + ("\n\nErrors:\n" + "\n".join(errors) if errors else "")
+    notes = [f"  {r['attack']}: {r['warning']}" for r in results if r.get("warning")]
+    return (table + ("\n\nWarnings:\n" + "\n".join(notes) if notes else "")
+            + ("\n\nErrors:\n" + "\n".join(errors) if errors else ""))
 
 
 def format_table(results: list[dict], kind: str = "image") -> str:
@@ -145,13 +152,14 @@ def write_outputs(cfg: dict, results: list[dict], versions: dict, device: str, k
         w = csv.writer(fh)
         w.writerow(["attack", "params", "n_samples", "clean_accuracy", "adversarial_accuracy",
                     "attack_success_rate", "mean_l2", "mean_linf", "mean_words_changed", "mean_queries",
-                    "n_prompts", "failed", "seconds", "error"])
+                    "n_prompts", "failed", "verdict", "suspected_false_positives", "seconds", "error"])
         for r in clean_results:
             w.writerow([r["attack"], json.dumps(r["params"]), r.get("n_samples"),
                         r.get("clean_accuracy"), r.get("adversarial_accuracy"),
                         r.get("attack_success_rate"), r.get("mean_l2"), r.get("mean_linf"),
                         r.get("mean_words_changed"), r.get("mean_queries"),
-                        r.get("n_prompts"), r.get("failed"), r.get("seconds"), r.get("error")])
+                        r.get("n_prompts"), r.get("failed"), r.get("verdict"), r.get("suspected_false_positives"),
+                        r.get("seconds"), r.get("error")])
 
     # Append-only audit log: who/what/when for every run.
     log_path = Path(cfg["output"]["dir"]) / "run_log.jsonl"

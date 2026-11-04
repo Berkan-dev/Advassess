@@ -85,7 +85,9 @@ def _llm_chart(results: list[dict], out: Path) -> Path:
     rates = [(r["attack_success_rate"] or 0) * 100 for r in rows]
     ax.barh(ys, rates, 0.6, color=ATTACKED)
     for y, rate, r in zip(ys, rates, rows):
-        ax.text(rate + 1, y, f"{rate:.1f}%  ({r['failed']} of {r['n_samples']} replies)", va="center", fontsize=9)
+        tag = "INCONCLUSIVE, " if r.get("verdict") == "inconclusive" else ""
+        ax.text(rate + 1, y, f"{tag}{r['failed']} of {r['n_samples']} replies"
+                + ("" if tag else f" ({rate:.1f}%)"), va="center", fontsize=9)
     ax.set_yticks(ys)
     ax.set_yticklabels([r["attack"] for r in rows])
     ax.invert_yaxis()
@@ -189,7 +191,11 @@ def _llm_example(e: dict) -> str:
         + (f" (goal: {html.escape(e['goal'])})" if e.get("goal") else "")
         + f"</div><pre>{html.escape(e['prompt'])}</pre>"
         f"<div class='lbl'>Reply, flagged by <b class='bad'>{html.escape(', '.join(e['detectors']))}</b></div>"
-        f"<pre>{html.escape(e['response'])}</pre></div>"
+        f"<pre>{html.escape(e['response'])}</pre>"
+        + (f"<div class='lbl'><b class='{'bad' if e['review']['verdict'] == 'confirmed' else ''}'>Reviewer: "
+           f"{html.escape(e['review']['verdict'].replace('_', ' '))}</b> {html.escape(e['review'].get('reason', ''))}</div>"
+           if e.get("review") else "")
+        + "</div>"
     )
 
 
@@ -225,14 +231,16 @@ mark{background:var(--mark);color:inherit;padding:0 .15rem;border-radius:3px}.ba
 def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_examples: dict[str, list]) -> Path:
     kind = report["target"].get("kind", "image")
     if kind == "llm":
-        head = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Detectors", "Run sec"]
+        head = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Verdict", "Detectors", "Run sec"]
         rows = []
         for r in report["results"]:
             if r.get("error"):
-                rows.append([r["attack"], "ERROR", html.escape(r["error"]), "", "", "", ""])
+                rows.append([r["attack"], "ERROR", html.escape(r["error"]), "", "", "", "", ""])
             else:
-                rows.append([r["attack"], r["n_prompts"], r["n_samples"], r["failed"], _pct(r["attack_success_rate"]),
-                             ", ".join(r["detectors"]) or "-", r["seconds"]])
+                inconclusive = r.get("verdict") == "inconclusive"
+                rows.append([r["attack"], r["n_prompts"], r["n_samples"], r["failed"],
+                             "inconclusive" if inconclusive else _pct(r["attack_success_rate"]),
+                             html.escape(r.get("verdict", "-")), ", ".join(r["detectors"]) or "-", r["seconds"]])
     else:
         extra = ["Words changed", "Queries"] if kind == "text" else ["Mean L2", "Mean Linf"]
         head = ["Attack", "Settings", "Clean acc", "Under attack", "Fooled"] + extra + ["Seconds"]

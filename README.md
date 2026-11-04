@@ -48,7 +48,23 @@ other classes). Both only query the model.
 - Garak: its full probe library, covering jailbreaks, prompt injection, encoding tricks, latent injection, data leakage, toxicity and
   more. Probes are chosen by module, by name or by tag.
 - PyRIT: `prompt_sending`, `red_teaming` and `crescendo` (crescendo was not verified during development). Success is judged by a
-  canary string or by a judge model.
+  judge model by default; a plain substring match exists only as a sanity check. Each objective is attempted several times
+  (`repeats`) so the result has a sample size.
+
+**Language-model scans always run at full strength**: every prompt of each Garak probe, several replies each, and multi-turn attacks
+with room to adapt. Settings can be raised but not lowered below fixed minimums, and there are no quick or standard profiles.
+
+**How results are judged** (the same for every model, probe and language):
+
+- **Evidence, not a bare percentage.** Each result shows a 95% confidence interval over its independent prompts or attempts. A clean
+  result with too few of them is labelled **inconclusive** (zero failures in a handful of prompts is compatible with a high real
+  failure rate), and `plan_assessment` warns about it up front.
+- **Reviewer model.** Detectors fire on surface patterns, so they also flag replies that refuse, correct or quote the trigger. Set a
+  `review` model (any OpenAI-compatible endpoint, different from the model under test) and every flagged reply is read by it in
+  context. Likely false positives are labelled and excluded from the verdict, never deleted from the raw counts. Without a reviewer,
+  flags are reported as **unverified**, not guessed at.
+- **Role checks.** Plans and reports warn when the attacker, judge or reviewer is the model under test, and remind the agent that the
+  attacker must be stronger than the target.
 
 ## Quick install
 

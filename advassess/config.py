@@ -35,10 +35,10 @@ DEFAULTS = {
     },
     "run": {
         "batch_size": 64, "seed": 0,
-        "generations": 3,              # LLM only: replies requested per prompt
-        "max_prompts_per_probe": 64,   # LLM only: cap on prompts per probe (raise for a fuller scan)
-        "parallel_requests": 1,        # LLM only
-        "timeout_minutes": 60,         # LLM only: limit per attack entry
+        "generations": 5,              # LLM only: replies requested per prompt (minimum 3)
+        "max_prompts_per_probe": 10000,  # LLM only: effectively no cap, every prompt of a probe runs (minimum 20)
+        "parallel_requests": 1,        # LLM only: raise to finish a full scan sooner if the endpoint allows
+        "timeout_minutes": 720,        # LLM only: limit per attack entry; full scans are slow
         "attack_timeout_seconds": None,  # numeric/text models: stop an attack that runs longer (default suite: 180)
     },
     "pyrit": {                     # LLM scans with engine: pyrit
@@ -48,6 +48,7 @@ DEFAULTS = {
         "max_completion_tokens": 400,
         "python": None,            # python executable of the environment where PyRIT is installed
     },
+    "review": None,                # optional {endpoint, model, api_key_env}: a reviewer LLM that verifies flagged replies
     "attacks": [],                 # leave out (or write "default") to run the built-in default suite
     "output": {"dir": "results", "save_examples": 8},
 }
@@ -211,8 +212,17 @@ def _validate_llm(cfg: dict) -> None:
     for key in ("generations", "max_prompts_per_probe", "parallel_requests"):
         if not isinstance(run[key], int) or run[key] < 1:
             raise ConfigError(f"run.{key} must be a positive integer")
+    from advassess.scoring import MIN_GARAK_PROMPTS, MIN_GENERATIONS
+    if run["generations"] < MIN_GENERATIONS:
+        raise ConfigError(f"run.generations must be at least {MIN_GENERATIONS}: language models answer differently each "
+                          "time, so fewer replies cannot support a rate. Scans always run at full strength.")
+    if run["max_prompts_per_probe"] < MIN_GARAK_PROMPTS:
+        raise ConfigError(f"run.max_prompts_per_probe must be at least {MIN_GARAK_PROMPTS}. Scans always run at full "
+                          "strength; leave it out to run every prompt of each probe.")
     if not isinstance(run["timeout_minutes"], (int, float)) or run["timeout_minutes"] <= 0:
         raise ConfigError("run.timeout_minutes must be a positive number")
+    if cfg.get("review") is not None:
+        pe.check_target_spec("review", cfg["review"])
     if not isinstance(cfg["pyrit"]["max_completion_tokens"], int) or cfg["pyrit"]["max_completion_tokens"] < 1:
         raise ConfigError("pyrit.max_completion_tokens must be a positive integer")
 
@@ -238,4 +248,7 @@ def _validate_llm(cfg: dict) -> None:
                               "max_prompts_per_probe or samples to control a scan")
         if "samples" in atk and (not isinstance(atk["samples"], int) or atk["samples"] < 1):
             raise ConfigError(f"attacks[{i}].samples must be a positive integer")
+        if "samples" in atk and atk["samples"] < MIN_GARAK_PROMPTS:
+            raise ConfigError(f"attacks[{i}].samples must be at least {MIN_GARAK_PROMPTS}. Scans always run at full "
+                              "strength; leave 'samples' out to run every prompt.")
         atk["params"] = {}

@@ -1,7 +1,7 @@
 """Attacks that run when the config lists none.
 
-The suites are meant to be a fair first look, not a full audit: a few strengths of the
-standard attacks plus slower ones capped with `samples`. Settings are tuned so each attack
+The numeric and text suites are a fair first look: a few strengths of the
+standard attacks plus slower ones capped with `samples`. The language-model suite is a full scan. Settings are tuned so each attack
 actually does something on typical models (see the README note on weak settings).
 """
 from __future__ import annotations
@@ -38,14 +38,13 @@ TEXT_SUITE = [
     {"name": "word_insertion", "params": {"max_words": 5, "candidates": 50}},
 ]
 
-# A modest first scan across the main LLM weakness families; each probe is capped by
-# run.max_prompts_per_probe and run.generations. Probes whose detectors download a classifier
-# (toxicity and similar) are left out so the default works offline and without a large download.
+# The full default LLM scan: whole Garak modules across the main weakness families, every prompt of every
+# probe, several replies each (see run.generations). Scans are never reduced to a quick or partial mode.
+# Probes whose detectors download a classifier (toxicity and similar) are left out so the default works
+# offline and without a large download. Expect a long run on a local model.
 LLM_SUITE = [
     {"name": name, "params": {}} for name in (
-        "promptinject.HijackHateHumans", "promptinject.HijackKillHumans",
-        "dan.Dan_11_0", "dan.DanInTheWild", "encoding.InjectBase64",
-        "latentinjection.LatentInjectionResume", "goodside.Tag", "goodside.WhoIsRiley",
+        "promptinject", "dan", "encoding", "latentinjection", "goodside",
     )
 ]
 

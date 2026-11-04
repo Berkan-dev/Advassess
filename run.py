@@ -221,8 +221,8 @@ def _run_llm(cfg: dict):
     cfg["_run_dir"] = str(run_dir)
     if garak_entries:
         print(f"Garak target: {llm['type']} {llm.get('name', '')}".rstrip())
-        print(f"Garak limits: up to {run['max_prompts_per_probe']} prompts per probe x {run['generations']} replies "
-              f"each (raise run.max_prompts_per_probe for a fuller scan).")
+        print(f"Garak limits: every prompt of each probe (cap {run['max_prompts_per_probe']}) x "
+              f"{run['generations']} replies each. Full scans are slow.")
     if pyrit_entries:
         total = sum(pe.estimate_requests(a) for a in pyrit_entries)
         print(f"PyRIT: about {total} model requests at most across {len(pyrit_entries)} attack entr"
@@ -230,10 +230,14 @@ def _run_llm(cfg: dict):
     print("Scans send many requests: make sure you are allowed to test this endpoint and expect API costs.\n")
 
     def run_one(atk, idx=0):
+        from advassess import review, scoring
         print("  (a scan can take several minutes; the tool's own log is saved in the results folder)")
         if atk.get("engine") == "pyrit":
-            return pe.run_entry(cfg, atk, idx, run_dir / "pyrit", cfg["output"]["save_examples"])
-        return g.run_spec(cfg, atk, idx, run_dir / "garak", cfg["output"]["save_examples"])
+            rows = pe.run_entry(cfg, atk, idx, run_dir / "pyrit", cfg["output"]["save_examples"])
+        else:
+            rows = g.run_spec(cfg, atk, idx, run_dir / "garak", cfg["output"]["save_examples"])
+        review.apply_review(rows, cfg)       # a reviewer model verifies flagged replies (if one is configured)
+        return [scoring.annotate(r) for r in rows]  # evidence label (confidence interval) and warnings
 
     versions = {"numpy": np.__version__}
     if garak_entries:
