@@ -73,7 +73,7 @@ Requires Python 3.10 or newer.
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath          # then open a new terminal
-pipx install "git+https://github.com/YOUR-USERNAME/advassess.git"
+pipx install "git+https://github.com/Berkan-dev/advassess.git"
 advassess doctor
 ```
 
