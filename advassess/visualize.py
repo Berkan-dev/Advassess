@@ -263,7 +263,7 @@ def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_exam
         what, size = str(t.get("path") or t["source"]), f" · {report['data'].get('max_samples')} samples max"
     body = [f"<h1>Adversarial assessment</h1><div class='meta'>{html.escape(report['timestamp_utc'])} · "
             f"target: {html.escape(what)}{size} · "
-            f"authorization note: {html.escape(str(report['authorization'].get('note', '')))}</div>",
+            f"authorization note: {html.escape(str((report.get('authorization') or {}).get('note', '')))}</div>",
             "<h2>Results</h2>", table]
     if report.get("default_attack_suite"):
         body.append("<p class='meta'>No attacks were listed in the config, so the built-in default suite ran.</p>")

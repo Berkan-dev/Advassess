@@ -31,16 +31,22 @@ def _print_attack_list() -> None:
     names = {}
     for alias, cls in cat.ALIASES.items():
         names.setdefault(cls, []).append(alias)
-    print("PyTorch classifiers (ART engine)")
-    print(f"  {'name(s) to use in the config':34s}{'type':11s}{'tested':8s}what it does")
+    print("Classifiers (ART engine): PyTorch, Keras, scikit-learn numeric")
+    print(f"  {'name(s) to use in the config':34s}{'type':11s}{'tested':8s}{'how it runs':32s}what it does")
     for cls, (category, summary) in cat.CATALOG.items():
         short = ", ".join(sorted(names.get(cls, []))) or cls.lower()
-        print(f"  {short:34s}{category:11s}{'yes' if cls in cat.VERIFIED else 'no':8s}{summary}")
+        task, scope = cat.task_of(cls), cat.scope_of(cls)
+        how = (f"adapter: {task.replace('_', ' ')}" if task != "classification" else
+               {"dataset": "one shared perturbation", "setup": "setup derived by tool"}.get(scope, "per input"))
+        print(f"  {short:34s}{category:11s}{'yes' if cls in cat.VERIFIED else 'no':8s}{how:32s}{summary}")
     print("\nLanguage models (Garak): python run.py --list-probes")
     print("\nscikit-learn text models")
     print("  " + ", ".join(sorted(text_engine.known_attacks())))
     print("\nSee an attack's settings:  python run.py --describe-attack NAME")
-    print("Attacks that need other model types (speech, video, object detection ...) are not supported.")
+    print("'adapter' attacks (object detection, video, speech ...) need a small adapter file you write: "
+          "python run.py --adapter-help")
+    if cat.UNSUPPORTED:
+        print("Not supported: " + ", ".join(sorted(cat.UNSUPPORTED)))
 
 
 def _print_attack_description(name: str) -> int:
@@ -177,6 +183,26 @@ def _run_art(cfg: dict):
     return run_one, versions, device
 
 
+def _run_adapter(cfg: dict):
+    """Models a plain config cannot describe (object detection, video, speech ...): a user adapter supplies them."""
+    import art
+    from advassess.engines import art_engine, art_extended as ext
+
+    print("Loading adapter ...")
+    adapter = ext.load_adapter(cfg["target"]["adapter"])
+    estimator = adapter.build_estimator()
+    inputs = adapter.inputs()
+    bs = cfg["run"]["batch_size"]
+    print(f"Adapter loaded: {type(adapter).__name__} | estimator: {type(estimator).__name__} | "
+          f"inputs: {', '.join(inputs)}\n")
+
+    def run_one(atk, idx=0):
+        return ext.run_adapter_attack(atk["name"], atk["params"], adapter, estimator, inputs, bs,
+                                      build_attack=art_engine.build_attack)
+
+    return run_one, {"art": art.__version__, "numpy": np.__version__}, "adapter"
+
+
 def _run_text(cfg: dict):
     import sklearn
     from advassess.text_targets import load_sklearn_model, load_text_data
@@ -291,6 +317,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--describe-attack", metavar="NAME", help="Show one attack's settings and exit")
     parser.add_argument("--list-probes", nargs="?", const="", metavar="FILTER",
                         help="List Garak probe modules for LLM scans (or one module's probes) and exit")
+    parser.add_argument("--adapter-help", action="store_true",
+                        help="Explain how to write an adapter for models a plain config cannot describe, then exit")
     parser.add_argument("--visualize", metavar="RUN_FOLDER",
                         help="Draw charts and report.html for an existing results folder, then exit")
     args = parser.parse_args(argv)
@@ -302,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.describe_attack:
         return _print_attack_description(args.describe_attack)
+    if args.adapter_help:
+        from advassess.engines.art_extended import ADAPTER_HELP
+        print(ADAPTER_HELP)
+        return 0
     if args.list_probes is not None:
         return _print_probes(args.list_probes)
     if args.visualize:
@@ -318,7 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     np.random.seed(cfg["run"]["seed"])
     kind = target_kind(cfg)
     try:
-        run_one, versions, device = {"text": _run_text, "llm": _run_llm}.get(kind, _run_art)(cfg)
+        runner = _run_adapter if cfg["target"]["source"] == "adapter" else {"text": _run_text, "llm": _run_llm}.get(kind, _run_art)
+        run_one, versions, device = runner(cfg)
     except (FileNotFoundError, KeyError, ValueError, TypeError, RuntimeError, ImportError, AttributeError) as exc:
         print(f"Could not load the model or data: {exc}")
         return 2
@@ -333,7 +366,8 @@ def main(argv: list[str] | None = None) -> int:
                 DEFAULT_SUITE_TIMEOUT if cfg.get("_default_attacks") and kind == "image" else None)
             out = _with_timeout(limit, run_one, atk, idx) if kind != "llm" else run_one(atk, idx)
             for result in (out if isinstance(out, list) else [out]):
-                if kind == "image" and result["mean_l2"] == 0 and not result["attack_success_rate"]:
+                if (kind == "image" and result["mean_l2"] == 0 and not result["attack_success_rate"]
+                        and result.get("perturbation_measured", True)):
                     result["warning"] = (
                         "This attack changed no inputs at all, so the result says nothing about robustness. "
                         "Its settings are probably too weak (try more iterations or a larger step or "

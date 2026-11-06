@@ -14,6 +14,7 @@ DEFAULTS = {
         "outputs": "auto",         # keras only: auto | logits | probabilities
         "model_class": None,       # state_dict only: "package.module:ClassName" or "file.py:ClassName"
         "model_args": {},          # state_dict only: arguments for the class constructor
+        "adapter": None,           # adapter only: "file.py:ClassName", for models a plain config cannot describe
         "input_shape": None,       # shape of ONE sample, without the batch dimension (default: read from the data)
         "num_classes": None,       # default: read from the model
         "clip_values": None,       # [min, max] allowed input value (default: inferred from the data and printed)
@@ -53,7 +54,7 @@ DEFAULTS = {
     "output": {"dir": "results", "save_examples": 8},
 }
 
-TARGET_SOURCES = {"torchscript", "pickle", "state_dict", "keras", "sklearn", "llm"}
+TARGET_SOURCES = {"torchscript", "pickle", "state_dict", "keras", "sklearn", "llm", "adapter"}
 DATA_SOURCES = {"npz", "csv"}
 
 
@@ -106,8 +107,13 @@ def _validate(cfg: dict, registry: dict[str, set[str]]) -> None:
     t = cfg["target"]
     if t["source"] not in TARGET_SOURCES:
         raise ConfigError(f"target.source must be one of {sorted(TARGET_SOURCES)}")
-    if t["source"] != "llm" and not t.get("path"):
-        raise ConfigError("target.path is required (the model file) unless target.source is llm")
+    if t["source"] == "adapter":
+        ad = t.get("adapter")
+        if not (isinstance(ad, str) and ":" in ad):
+            raise ConfigError("target.adapter is required for source: adapter, written like 'my_adapter.py:MyAdapter' "
+                              "(see: python run.py --adapter-help)")
+    elif t["source"] != "llm" and not t.get("path"):
+        raise ConfigError("target.path is required (the model file) unless target.source is llm or adapter")
     if t["source"] == "state_dict":
         mc = t.get("model_class")
         if not (isinstance(mc, str) and ":" in mc):
@@ -138,6 +144,8 @@ def _validate(cfg: dict, registry: dict[str, set[str]]) -> None:
             raise ConfigError("target.device must be auto, cpu or cuda")
 
     d = cfg["data"]
+    if t["source"] == "adapter":
+        d = {**d, "source": "npz", "path": "(supplied by the adapter)"}  # the adapter supplies the data
     if d["source"] not in DATA_SOURCES:
         raise ConfigError(f"data.source must be one of {sorted(DATA_SOURCES)}")
     if d["source"] in {"npz", "csv"} and not d.get("path"):
@@ -159,6 +167,9 @@ def _validate(cfg: dict, registry: dict[str, set[str]]) -> None:
         raise ConfigError("run.attack_timeout_seconds must be a positive number (or left out)")
 
     attacks = cfg["attacks"]
+    if t["source"] == "adapter" and cfg.get("_default_attacks"):
+        raise ConfigError("An adapter target needs an explicit 'attacks' list: there is no default suite for models "
+                          "the tool cannot describe")
     if cfg.get("_default_attacks"):
         return
     known_attacks = registry[kind]
@@ -180,6 +191,13 @@ def _validate(cfg: dict, registry: dict[str, set[str]]) -> None:
             atk["params"] = {}
         if "samples" in atk and (not isinstance(atk["samples"], int) or atk["samples"] < 1):
             raise ConfigError(f"attacks[{i}].samples must be a positive integer")
+        if kind == "image":
+            from advassess.engines import art_catalog as cat
+            task = cat.task_of(cat.resolve_name(atk["name"]))
+            if task != "classification" and t["source"] != "adapter":
+                raise ConfigError(f"Attack '{atk['name']}' attacks a {task.replace('_', ' ')} model. A plain config cannot "
+                                  "describe one: use target.source: adapter and a small adapter file "
+                                  "(see: python run.py --adapter-help).")
 
 
 def _validate_llm(cfg: dict) -> None:

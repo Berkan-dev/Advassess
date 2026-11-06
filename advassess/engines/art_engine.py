@@ -30,7 +30,7 @@ NEEDS_PROBABILITIES = {"VirtualAdversarialMethod", "SimBA"}
 NEEDS_LOGITS = {"AutoAttack"}
 # Attacks that read y as the class to steer TOWARDS. Untargeted runs pass y=None
 # so ART picks a random wrong class for each input.
-Y_IS_TARGET = {"SaliencyMapMethod"}
+Y_IS_TARGET = {"SaliencyMapMethod", "DecisionTreeAttack"}  # ART reads y as the class to reach, not the true label
 # Needs colour images (3 channels).
 NEEDS_RGB = {"CompositeAdversarialAttackPyTorch"}
 # Settings added when the user gives none (these attacks do nothing without them).
@@ -155,7 +155,7 @@ def check_applicable(name: str, classifier, prob_classifier, params: dict, batch
 
 
 def _load_class(class_name: str):
-    module = importlib.import_module("art.attacks.evasion")
+    module = importlib.import_module(cat.SPECIAL_MODULES.get(class_name, "art.attacks.evasion"))
     try:
         return getattr(module, class_name)
     except AttributeError:
@@ -242,6 +242,19 @@ def run_attack(
     `target_class: N` in the params; success then means the model outputs class N.
     """
     params = dict(params)
+    class_name = cat.resolve_name(name)
+    task, scope = cat.task_of(class_name), cat.scope_of(class_name)
+    if task != "classification":
+        raise RuntimeError(f"{class_name} attacks a {task.replace('_', ' ')} model, which a plain config cannot describe. "
+                           "Use target.source: adapter and a small adapter file (see: python run.py --adapter-help).")
+    if scope in ("dataset", "setup"):  # one shared perturbation / patch, or attacks whose setup is derived
+        from advassess.engines import art_extended as ext
+        run = ext.run_dataset_attack if scope == "dataset" else ext.run_setup_attack
+        return run(name, params, classifier, x, y, batch_size, n_examples=n_examples, samples=samples,
+                   build_attack=build_attack, prob_classifier=prob_classifier)
+    if class_name in cat.NEEDS_SKLEARN_TREE and type(classifier).__name__ != "ScikitlearnDecisionTreeClassifier":
+        raise RuntimeError(f"{class_name} needs a scikit-learn DecisionTreeClassifier (target.source: sklearn, "
+                           "input_type: tabular)")
     targeted = bool(params.get("targeted", False))
     target_class = params.pop("target_class", None)
     if targeted and target_class is None:

@@ -15,7 +15,24 @@ It runs adversarial attacks against:
 
 - **Image and numeric classifiers**: PyTorch (TorchScript, or weights plus the model class), Keras / TensorFlow (`.keras`, `.h5`)
   and scikit-learn models.
-- **Text classifiers**: scikit-learn pipelines that take raw text.
+- **Attacks that need more than a model and data.** These are in `--list-attacks` under "how it runs":
+
+- *One shared perturbation* (`universal`, `targeted_universal`, `patch`, `adversarialpatch*`): one perturbation or patch is learned on
+  part of your data and scored on the held-out rest, because a universal attack that is judged on its own training inputs
+  proves nothing. They need at least 20 samples; patches need image input.
+- *Setup derived by the tool* (`lowprofool`, `featureadv*`, `graphite*`, `laser`): the extra inputs these attacks require (feature
+  importances, guide images, target class, patch and network sizes) are worked out from your data and model. If the model type
+  cannot support the attack, the run says so instead of guessing.
+- *Adapter* attacks (object detection, tracking, video, speech, malware, Gaussian-process and decision-tree-leaf models): the model
+  and its scoring are not something a plain config can describe. Write a small adapter class (`python run.py --adapter-help`),
+  and set `target: {source: adapter, adapter: "my_adapter.py:MyAdapter"}`. The adapter file runs with your permissions, like
+  `target.model_class`. The adapter's `score()` must return `clean_score`, `adv_score` and `success_rate`.
+
+Verified during development: `universal`, `targeted_universal`, `lowprofool`, `dtattack` and the adapter plumbing, on scikit-learn
+models. Not run during development (they need PyTorch, TensorFlow or real detection, video or speech models): the patch attacks,
+`featureadv*`, `graphite*`, `laser` and every adapter-driven attack. Treat the first run of these as untested.
+
+**Text classifiers**: scikit-learn pipelines that take raw text.
 - **Language models**: local or hosted, through Garak (fixed jailbreak and injection probes) and PyRIT (an attacker LLM that
   converses with the target and adapts each turn).
 

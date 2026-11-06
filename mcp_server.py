@@ -45,6 +45,9 @@ Workflow: 1) write_config or pick an existing config; 2) plan_assessment, and sh
 costs, whether hosted endpoints are involved) and get their approval; 3) start_assessment; 4) poll get_job until it
 finishes; 5) get_report. Do not start an assessment the user has not approved.
 
+Some attacks need an adapter file (a short Python class for non-classifier models, e.g. object detectors or speech models);
+list_attacks shows which. Ask the user for the adapter file rather than writing the model-loading code yourself.
+
 Scans are always full strength. There are no quick or standard profiles: never lower generations, max_prompts_per_probe,
 samples, objectives or max_turns, and leave them out of configs so the thorough defaults apply (the validator rejects values
 below the minimums). Expect long runs on local models and tell the user so; use parallel_requests to speed up, not smaller scans.
@@ -147,11 +150,16 @@ def build_server(workspace: Path, max_jobs: int, allowed_paths: tuple[Path, ...]
         return {
             "classifiers_pytorch_keras_sklearn_numeric": [
                 {"names": sorted(names.get(cls, [])) or [cls.lower()], "art_class": cls, "type": category,
-                 "verified_in_self_test": cls in cat.VERIFIED, "summary": summary}
+                 "verified_in_self_test": cls in cat.VERIFIED, "summary": summary,
+                 "how_it_runs": ("adapter: " + cat.task_of(cls)) if cat.task_of(cls) != "classification" else cat.scope_of(cls)}
                 for cls, (category, summary) in cat.CATALOG.items()],
             "text_classifiers_sklearn": sorted(text_engine.known_attacks()),
             "language_models": "Garak probes (use list_probes) and PyRIT strategies prompt_sending, red_teaming, "
                                "crescendo (crescendo untested). PyRIT needs an attacker model and credentials.",
+            "how_it_runs_note": "per input = normal; 'dataset' attacks learn one shared perturbation or patch on part of "
+                                "the data and are scored on the rest; 'setup' attacks have their extra settings derived by the "
+                                "tool; attacks on detection, tracking, video, speech or malware models need an adapter "
+                                "(target.source: adapter, see the README) and cannot run from a plain config.",
             "not_supported": sorted(cat.UNSUPPORTED),
         }
 

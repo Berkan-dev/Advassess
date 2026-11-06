@@ -133,7 +133,7 @@ def write_outputs(cfg: dict, results: list[dict], versions: dict, device: str, k
                     "model": t["llm"].get("name") or ((cfg.get("pyrit") or {}).get("objective_target") or {}).get("model", ""),
                     "options": t["llm"].get("options", {})} if kind == "llm" else
                    {"source": t["source"], "path": t["path"], "kind": "text"} if kind == "text" else
-                   {"source": t["source"], "path": t["path"], "input_shape": t["input_shape"],
+                   {"source": t["source"], "path": t.get("path") or t.get("adapter"), "input_shape": t["input_shape"],
                     "num_classes": t["num_classes"], "clip_values": t["clip_values"], "device": device,
                     "kind": "image"}),
         "data": ({"source": "none (LLM probes)"} if kind == "llm" else
