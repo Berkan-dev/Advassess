@@ -1,0 +1,182 @@
+diff --git a/README.md b/README.md
+index 8a7a656..c25adc2 100755
+--- a/README.md
++++ b/README.md
+@@ -36,7 +36,7 @@ models. Not run during development (they need PyTorch, TensorFlow or real detect
+ - **Language models**: local or hosted, through Garak (fixed jailbreak and injection probes) and PyRIT (an attacker LLM that
+   converses with the target and adapts each turn).
+ 
+-Each run produces a results table, charts, example attack inputs and a self-contained `report.html`. Results list the model's
++Every run ends by writing `report.html` (open it in a browser). It is not optional: if it cannot be written the run exits with an error, and if one chart fails the page is still written and says which. Each run produces a results table, charts, example attack inputs and a self-contained `report.html`. Results list the model's
+ accuracy before and after each attack, how many inputs were fooled, warnings (for example an attack that changed nothing, which
+ would otherwise look like robustness), attacks that were skipped, and the limits of the assessment.
+ 
+diff --git a/advassess/visualize.py b/advassess/visualize.py
+index 99222ce..8bdc32a 100644
+--- a/advassess/visualize.py
++++ b/advassess/visualize.py
+@@ -228,7 +228,8 @@ mark{background:var(--mark);color:inherit;padding:0 .15rem;border-radius:3px}.ba
+ """
+ 
+ 
+-def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_examples: dict[str, list]) -> Path:
++def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_examples: dict[str, list],
++                 problems: list[str] | None = None) -> Path:
+     kind = report["target"].get("kind", "image")
+     if kind == "llm":
+         head = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Verdict", "Detectors", "Run sec"]
+@@ -265,6 +266,9 @@ def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_exam
+             f"target: {html.escape(what)}{size} · "
+             f"authorization note: {html.escape(str((report.get('authorization') or {}).get('note', '')))}</div>",
+             "<h2>Results</h2>", table]
++    if problems:
++        body.append("<div class='meta' style='border:1px solid #c00;padding:8px'><b>Some charts could not be drawn:</b><ul>"
++                    + "".join(f"<li>{html.escape(x)}</li>" for x in problems) + "</ul>The results table above is complete.</div>")
+     if report.get("default_attack_suite"):
+         body.append("<p class='meta'>No attacks were listed in the config, so the built-in default suite ran.</p>")
+     for sk in report.get("skipped_attacks", []):
+@@ -297,6 +301,7 @@ def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_exam
+ # ----------------------------------------------------------------- entry point
+ 
+ def make_visuals(run_dir: str | Path) -> list[Path]:
++    """Always writes report.html. A chart that fails is listed in the page and does not stop the rest."""
+     run_dir = Path(run_dir)
+     report_path = run_dir / "report.json"
+     if not report_path.is_file():
+@@ -307,13 +312,34 @@ def make_visuals(run_dir: str | Path) -> list[Path]:
+ 
+     images: dict[str, Path] = {}
+     text_examples: dict[str, list] = {}
+-    if results and kind == "llm":
+-        images["summary.png"] = _llm_chart(results, run_dir / "summary.png")
+-    elif results:
+-        images["summary.png"] = _summary_chart(results, run_dir / "summary.png")
+-        sweep = _sweep_chart(results, run_dir / "sweep.png")
+-        if sweep:
+-            images["sweep.png"] = sweep
++    problems: list[str] = []
++
++    def attempt(what: str, fn, *args):
++        try:
++            return fn(*args)
++        except Exception as exc:  # one broken chart must not take the report down
++            problems.append(f"{what}: {type(exc).__name__}: {exc}")
++            return None
++
++    try:
++        import matplotlib  # noqa: F401
++        have_plots = True
++    except ImportError:
++        have_plots = False
++        problems.append("matplotlib is not installed, so there are no charts (pip install matplotlib)")
++
++    if have_plots and results:
++        if kind == "llm":
++            made = attempt("summary chart", _llm_chart, results, run_dir / "summary.png")
++            if made:
++                images["summary.png"] = made
++        else:
++            made = attempt("summary chart", _summary_chart, results, run_dir / "summary.png")
++            if made:
++                images["summary.png"] = made
++            sweep = attempt("sweep chart", _sweep_chart, results, run_dir / "sweep.png")
++            if sweep:
++                images["sweep.png"] = sweep
+     has_links = any(r.get("examples_file") for r in report["results"])
+     if has_links:
+         sources = [(r["attack"] if kind == "llm" else _label(r), run_dir / r["examples_file"])
+@@ -324,10 +350,14 @@ def make_visuals(run_dir: str | Path) -> list[Path]:
+         if not path.is_file():
+             continue
+         if kind in ("text", "llm") and path.suffix == ".json":
+-            text_examples[title] = json.loads(path.read_text(encoding="utf-8"))
+-        elif kind == "image" and path.suffix == ".npz":
+-            made = _examples_chart(path, title, run_dir / f"{path.stem}.png")
++            ex = attempt(f"examples for {title}", lambda p=path: json.loads(p.read_text(encoding="utf-8")))
++            if ex is not None:
++                text_examples[title] = ex
++        elif kind == "image" and path.suffix == ".npz" and have_plots:
++            made = attempt(f"example images for {title}", _examples_chart, path, title, run_dir / f"{path.stem}.png")
+             if made:
+                 images[made.name] = made
+-    html_path = _html_report(report, run_dir, images, text_examples)
++    html_path = _html_report(report, run_dir, images, text_examples, problems)
++    for msg in problems:
++        print(f"  note: {msg}")
+     return [*images.values(), html_path]
+diff --git a/mcp_server.py b/mcp_server.py
+index f29c959..fcb33d0 100644
+--- a/mcp_server.py
++++ b/mcp_server.py
+@@ -585,6 +585,9 @@ def build_server(workspace: Path, max_jobs: int, allowed_paths: tuple[Path, ...]
+                "summary_markdown": "\n".join(rows[:80]), "results": results[:80], "warnings": warnings,
+                "skipped_attacks": r.get("skipped_attacks", []), "limits": r["limits"],
+                "files": {n: rel(d / n) for n in ("report.html", "summary.png", "sweep.png", "report.csv") if (d / n).exists()}}
++        if not (d / "report.html").exists():
++            warnings.append("report.html is missing from this run folder. Run `python run.py --visualize <run folder>` "
++                            "to create it before telling the user to open the results.")
+         if include_examples and kind in ("text", "llm"):
+             ex = []
+             for x in r["results"]:
+diff --git a/pyproject.toml b/pyproject.toml
+index 9163a31..fbaf279 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -25,6 +25,7 @@ dependencies = [
+   "joblib>=1.3",
+   "mcp>=2.0.0",
+   "tomlkit>=0.12",
++  "matplotlib>=3.7",
+ ]
+ 
+ [project.optional-dependencies]
+diff --git a/run.py b/run.py
+index 3aee4ea..19b3541 100644
+--- a/run.py
++++ b/run.py
+@@ -6,6 +6,7 @@ import os
+ import signal
+ import sys
+ import traceback
++from pathlib import Path
+ 
+ import numpy as np
+ 
+@@ -294,19 +295,21 @@ def _print_probes(filter_text: str) -> int:
+ 
+ 
+ def _draw(run_dir) -> int:
+-    """Charts and report.html; never lets a plotting problem break an assessment."""
++    """Charts and report.html. Not optional: if report.html cannot be written the run is reported as failed."""
+     try:
+         from advassess.visualize import make_visuals
+         files = make_visuals(run_dir)
+-    except ImportError:
+-        print("\nTo also get charts and report.html, install matplotlib:  pip install matplotlib")
+-        return 1
++        page = Path(run_dir) / "report.html"
++        if not page.is_file():
++            raise RuntimeError("report.html was not created")
+     except Exception as exc:
+-        print(f"\nCould not draw charts: {type(exc).__name__}: {exc}")
++        print(f"\nERROR: the visual report could not be created: {type(exc).__name__}: {exc}")
++        print(f"The raw results are still in {run_dir}. Retry with:  python run.py --visualize {run_dir}")
+         return 1
+     print("\nCharts and report saved:")
+     for f in files:
+         print(f"  {f}")
++    print(f"\nOpen this in a browser to see the results:  {page.resolve()}")
+     return 0
+ 
+ 
+@@ -405,7 +408,9 @@ def main(argv: list[str] | None = None) -> int:
+     for line in limits_for(kind):
+         print(f"  - {line}")
+     print(f"\nReport saved to: {out_dir}")
+-    _draw(out_dir)
++    drawn = _draw(out_dir)
++    if drawn:
++        return 2
+     return 0 if all(not r["error"] for r in results) else 1
+ 
+ 

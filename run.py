@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import traceback
+from pathlib import Path
 
 import numpy as np
 
@@ -294,19 +295,21 @@ def _print_probes(filter_text: str) -> int:
 
 
 def _draw(run_dir) -> int:
-    """Charts and report.html; never lets a plotting problem break an assessment."""
+    """Charts and report.html. Not optional: if report.html cannot be written the run is reported as failed."""
     try:
         from advassess.visualize import make_visuals
         files = make_visuals(run_dir)
-    except ImportError:
-        print("\nTo also get charts and report.html, install matplotlib:  pip install matplotlib")
-        return 1
+        page = Path(run_dir) / "report.html"
+        if not page.is_file():
+            raise RuntimeError("report.html was not created")
     except Exception as exc:
-        print(f"\nCould not draw charts: {type(exc).__name__}: {exc}")
+        print(f"\nERROR: the visual report could not be created: {type(exc).__name__}: {exc}")
+        print(f"The raw results are still in {run_dir}. Retry with:  python run.py --visualize {run_dir}")
         return 1
     print("\nCharts and report saved:")
     for f in files:
         print(f"  {f}")
+    print(f"\nOpen this in a browser to see the results:  {page.resolve()}")
     return 0
 
 
@@ -405,7 +408,9 @@ def main(argv: list[str] | None = None) -> int:
     for line in limits_for(kind):
         print(f"  - {line}")
     print(f"\nReport saved to: {out_dir}")
-    _draw(out_dir)
+    drawn = _draw(out_dir)
+    if drawn:
+        return 2
     return 0 if all(not r["error"] for r in results) else 1
 
 

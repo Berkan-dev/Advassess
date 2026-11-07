@@ -228,7 +228,8 @@ mark{background:var(--mark);color:inherit;padding:0 .15rem;border-radius:3px}.ba
 """
 
 
-def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_examples: dict[str, list]) -> Path:
+def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_examples: dict[str, list],
+                 problems: list[str] | None = None) -> Path:
     kind = report["target"].get("kind", "image")
     if kind == "llm":
         head = ["Probe", "Prompts", "Replies", "Failed", "Attack success", "Verdict", "Detectors", "Run sec"]
@@ -265,6 +266,9 @@ def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_exam
             f"target: {html.escape(what)}{size} · "
             f"authorization note: {html.escape(str((report.get('authorization') or {}).get('note', '')))}</div>",
             "<h2>Results</h2>", table]
+    if problems:
+        body.append("<div class='meta' style='border:1px solid #c00;padding:8px'><b>Some charts could not be drawn:</b><ul>"
+                    + "".join(f"<li>{html.escape(x)}</li>" for x in problems) + "</ul>The results table above is complete.</div>")
     if report.get("default_attack_suite"):
         body.append("<p class='meta'>No attacks were listed in the config, so the built-in default suite ran.</p>")
     for sk in report.get("skipped_attacks", []):
@@ -297,6 +301,7 @@ def _html_report(report: dict, run_dir: Path, images: dict[str, Path], text_exam
 # ----------------------------------------------------------------- entry point
 
 def make_visuals(run_dir: str | Path) -> list[Path]:
+    """Always writes report.html. A chart that fails is listed in the page and does not stop the rest."""
     run_dir = Path(run_dir)
     report_path = run_dir / "report.json"
     if not report_path.is_file():
@@ -307,13 +312,34 @@ def make_visuals(run_dir: str | Path) -> list[Path]:
 
     images: dict[str, Path] = {}
     text_examples: dict[str, list] = {}
-    if results and kind == "llm":
-        images["summary.png"] = _llm_chart(results, run_dir / "summary.png")
-    elif results:
-        images["summary.png"] = _summary_chart(results, run_dir / "summary.png")
-        sweep = _sweep_chart(results, run_dir / "sweep.png")
-        if sweep:
-            images["sweep.png"] = sweep
+    problems: list[str] = []
+
+    def attempt(what: str, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as exc:  # one broken chart must not take the report down
+            problems.append(f"{what}: {type(exc).__name__}: {exc}")
+            return None
+
+    try:
+        import matplotlib  # noqa: F401
+        have_plots = True
+    except ImportError:
+        have_plots = False
+        problems.append("matplotlib is not installed, so there are no charts (pip install matplotlib)")
+
+    if have_plots and results:
+        if kind == "llm":
+            made = attempt("summary chart", _llm_chart, results, run_dir / "summary.png")
+            if made:
+                images["summary.png"] = made
+        else:
+            made = attempt("summary chart", _summary_chart, results, run_dir / "summary.png")
+            if made:
+                images["summary.png"] = made
+            sweep = attempt("sweep chart", _sweep_chart, results, run_dir / "sweep.png")
+            if sweep:
+                images["sweep.png"] = sweep
     has_links = any(r.get("examples_file") for r in report["results"])
     if has_links:
         sources = [(r["attack"] if kind == "llm" else _label(r), run_dir / r["examples_file"])
@@ -324,10 +350,14 @@ def make_visuals(run_dir: str | Path) -> list[Path]:
         if not path.is_file():
             continue
         if kind in ("text", "llm") and path.suffix == ".json":
-            text_examples[title] = json.loads(path.read_text(encoding="utf-8"))
-        elif kind == "image" and path.suffix == ".npz":
-            made = _examples_chart(path, title, run_dir / f"{path.stem}.png")
+            ex = attempt(f"examples for {title}", lambda p=path: json.loads(p.read_text(encoding="utf-8")))
+            if ex is not None:
+                text_examples[title] = ex
+        elif kind == "image" and path.suffix == ".npz" and have_plots:
+            made = attempt(f"example images for {title}", _examples_chart, path, title, run_dir / f"{path.stem}.png")
             if made:
                 images[made.name] = made
-    html_path = _html_report(report, run_dir, images, text_examples)
+    html_path = _html_report(report, run_dir, images, text_examples, problems)
+    for msg in problems:
+        print(f"  note: {msg}")
     return [*images.values(), html_path]

@@ -36,7 +36,7 @@ models. Not run during development (they need PyTorch, TensorFlow or real detect
 - **Language models**: local or hosted, through Garak (fixed jailbreak and injection probes) and PyRIT (an attacker LLM that
   converses with the target and adapts each turn).
 
-Each run produces a results table, charts, example attack inputs and a self-contained `report.html`. Results list the model's
+Every run ends by writing `report.html` (open it in a browser). It is not optional: if it cannot be written the run exits with an error, and if one chart fails the page is still written and says which. Each run produces a results table, charts, example attack inputs and a self-contained `report.html`. Results list the model's
 accuracy before and after each attack, how many inputs were fooled, warnings (for example an attack that changed nothing, which
 would otherwise look like robustness), attacks that were skipped, and the limits of the assessment.
 
@@ -64,9 +64,22 @@ other classes). Both only query the model.
 
 - Garak: its full probe library, covering jailbreaks, prompt injection, encoding tricks, latent injection, data leakage, toxicity and
   more. Probes are chosen by module, by name or by tag.
-- PyRIT: `prompt_sending`, `red_teaming` and `crescendo` (crescendo was not verified during development). Success is judged by a
-  judge model by default; a plain substring match exists only as a sanity check. Each objective is attempted several times
-  (`repeats`) so the result has a sample size.
+- PyRIT strategies (set `strategy:` on an `engine: pyrit` attack):
+
+  | Strategy | What it does | Needs attacker model |
+  |---|---|---|
+  | `prompt_sending` | sends each objective as one prompt | no |
+  | `red_teaming` | attacker LLM converses with the target, adapting every turn | yes |
+  | `crescendo` | gradual escalation over several turns | yes |
+  | `many_shot` | Many-Shot Jailbreak: a long faux dialogue of an "AI" complying is placed before the objective (`example_count`, at least 50, default 100) | no |
+  | `skeleton_key` | Skeleton Key: first persuades the model to "update" its guidelines and answer with a warning instead of refusing, then sends the objective | no |
+  | `pair` | PAIR: parallel attacker streams (`tree_width`, at least 3) each refine their prompt from the last reply; `max_turns` is the depth | yes |
+  | `tap` | Tree of Attacks with Pruning: PAIR plus branching and pruning of weak attempts | yes |
+
+  Success is judged by a judge model by default; a plain substring match exists only as a sanity check (not available for `pair`
+  and `tap`, which rank attempts by a 0-1 judge score with PyRIT's built-in "task achieved" scale at threshold 0.7). Each objective is
+  attempted several times (`repeats`) so the result has a sample size. `crescendo`, `many_shot`, `skeleton_key`, `pair` and `tap` were
+  not run against a real model during development: check the first transcripts before trusting the numbers.
 
 **Language-model scans always run at full strength**: every prompt of each Garak probe, several replies each, and multi-turn attacks
 with room to adapt. Settings can be raised but not lowered below fixed minimums, and there are no quick or standard profiles.

@@ -155,7 +155,8 @@ def build_server(workspace: Path, max_jobs: int, allowed_paths: tuple[Path, ...]
                 for cls, (category, summary) in cat.CATALOG.items()],
             "text_classifiers_sklearn": sorted(text_engine.known_attacks()),
             "language_models": "Garak probes (use list_probes) and PyRIT strategies prompt_sending, red_teaming, "
-                               "crescendo (crescendo untested). PyRIT needs an attacker model and credentials.",
+                               "crescendo, many_shot, skeleton_key, pair, tap (all except prompt_sending and red_teaming "
+                               "untested). red_teaming, crescendo, pair and tap need an attacker model; PyRIT needs credentials.",
             "how_it_runs_note": "per input = normal; 'dataset' attacks learn one shared perturbation or patch on part of "
                                 "the data and are scored on the rest; 'setup' attacks have their extra settings derived by the "
                                 "tool; attacks on detection, tracking, video, speech or malware models need an adapter "
@@ -585,6 +586,9 @@ def build_server(workspace: Path, max_jobs: int, allowed_paths: tuple[Path, ...]
                "summary_markdown": "\n".join(rows[:80]), "results": results[:80], "warnings": warnings,
                "skipped_attacks": r.get("skipped_attacks", []), "limits": r["limits"],
                "files": {n: rel(d / n) for n in ("report.html", "summary.png", "sweep.png", "report.csv") if (d / n).exists()}}
+        if not (d / "report.html").exists():
+            warnings.append("report.html is missing from this run folder. Run `python run.py --visualize <run folder>` "
+                            "to create it before telling the user to open the results.")
         if include_examples and kind in ("text", "llm"):
             ex = []
             for x in r["results"]:
