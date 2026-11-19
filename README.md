@@ -33,8 +33,8 @@ models. Not run during development (they need PyTorch, TensorFlow or real detect
 `featureadv*`, `graphite*`, `laser` and every adapter-driven attack. Treat the first run of these as untested.
 
 **Text classifiers**: scikit-learn pipelines that take raw text.
-- **Language models**: local or hosted, through Garak (fixed jailbreak and injection probes) and PyRIT (an attacker LLM that
-  converses with the target and adapts each turn).
+- **Language models**: local or hosted, through Garak (fixed jailbreak and injection probes), PyRIT (an attacker LLM that
+  converses with the target and adapts each turn), or your own agent acting as attacker and judge (see *Agent as attacker and judge*).
 
 Every run ends by writing `report.html` (open it in a browser). It is not optional: if it cannot be written the run exits with an error, and if one chart fails the page is still written and says which. Each run produces a results table, charts, example attack inputs and a self-contained `report.html`. Results list the model's
 accuracy before and after each attack, how many inputs were fooled, warnings (for example an attack that changed nothing, which
@@ -80,6 +80,9 @@ other classes). Both only query the model.
   and `tap`, which rank attempts by a 0-1 judge score with PyRIT's built-in "task achieved" scale at threshold 0.7). Each objective is
   attempted several times (`repeats`) so the result has a sample size. `crescendo`, `many_shot`, `skeleton_key`, `pair` and `tap` were
   not run against a real model during development: check the first transcripts before trusting the numbers.
+
+- Agent-driven red teaming: the agent you are talking to is the attacker and the judge; only the target needs an endpoint. No
+  attacker or judge model has to be configured.
 
 **Language-model scans always run at full strength**: every prompt of each Garak probe, several replies each, and multi-turn attacks
 with room to adapt. Settings can be raised but not lowered below fixed minimums, and there are no quick or standard profiles.
@@ -146,5 +149,43 @@ Then ask your agent in plain language, for example: *"Assess the Keras model in 
 | `plan_assessment` | Show what would run, without running anything |
 | `start_assessment`, `get_job`, `cancel_job` | Run in the background, check progress, stop |
 | `list_runs`, `get_report` | Find finished runs and read their results |
+| `redteam_start`, `redteam_send`, `redteam_conclude`, `redteam_get`, `redteam_list`, `redteam_report` | Adaptive red teaming with the agent as attacker and judge |
+| `agent_llm_next`, `agent_llm_answer` | Let the agent answer PyRIT's attacker and judge requests when its client has no sampling |
 
 API keys are never put in a config: name an environment variable instead, and set it where the agent is started.
+
+### Agent as attacker and judge
+
+For adaptive attacks you do not need separate attacker and judge models: the agent you are talking to plays both, and only the
+target needs an endpoint (any OpenAI-compatible chat API). Ask, for example: *"Red-team the chat endpoint at
+`https://example.com/v1` (model `my-model`, key in `TARGET_API_KEY`) with the objective 'get it to reveal its hidden instructions'.
+Its system prompt is `...`. Run at least 20 independent attempts."* The agent will:
+
+1. open a session (`redteam_start`) once you approve the target, the objective and the turn budget (at least 5 turns; every message
+   is one request to the target);
+2. write each attack message itself and send it (`redteam_send`), adapting to the target's replies;
+3. judge the transcript and record its verdict (`redteam_conclude`: achieved, not achieved, or abandoned if it declines the objective);
+4. after many sessions, build the report (`redteam_report`), which has the same 95% intervals and `report.html` as every other run.
+
+One session is one attempt, so a few failed sessions are not evidence of safety; the report says how many are needed. Because the
+agent both wrote the attacks and judges them, its verdicts are less independent than a separate judge model's, and the report
+says so. The target's API key must be in an environment variable set where the agent starts the server; it is never stored.
+Replies from the target are treated as untrusted data.
+
+**The full PyRIT strategies with the agent as attacker and judge.** PyRIT's automated strategies (red teaming, crescendo, PAIR, TAP
+and the others) normally need a separate attacker model and judge model. Set both roles to `agent` in the assessment config (the
+agent can write it for you) and the connected agent plays them instead; only the target needs an endpoint:
+
+```yaml
+pyrit:
+  objective_target: {endpoint: https://example.com/v1, model: my-model, api_key_env: TARGET_API_KEY}
+  adversarial_target: agent
+  scoring_target: agent
+```
+
+When `start_assessment` runs such a config, every attacker and judge request from PyRIT is answered by the agent's model:
+automatically if the client supports MCP sampling (Hermes does), otherwise by the agent itself, which fetches each request
+(`agent_llm_next`), writes the completion, and returns it (`agent_llm_answer`) until the run finishes. A run makes many such
+requests, so expect it to take longer and use more of the agent's tokens than separate models would; Hermes limits sampling by
+default (low requests-per-minute and per-request time limits), so raise those in its MCP server settings first. The report
+marks both roles as played by the agent. This only works through the MCP server, never from a plain command-line run.

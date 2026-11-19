@@ -35,7 +35,8 @@ def reviewer_spec(cfg: dict, row_is_pyrit: bool = False) -> dict | None:
     if cfg.get("review"):
         return cfg["review"]
     if row_is_pyrit:
-        return (cfg.get("pyrit") or {}).get("scoring_target")
+        spec = (cfg.get("pyrit") or {}).get("scoring_target")
+        return spec if isinstance(spec, dict) else None  # the agent judge has no endpoint of its own
     return None
 
 

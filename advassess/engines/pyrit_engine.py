@@ -91,6 +91,14 @@ NOT_AVAILABLE = (
 )
 
 
+AGENT = "agent"   # attacker_target / scoring_target: the connected agent plays that role (see agent_bridge.py)
+BRIDGE_ENV = "ADVASSESS_AGENT_BRIDGE"
+
+
+def is_agent(spec) -> bool:
+    return isinstance(spec, str) and spec.strip().lower() == AGENT
+
+
 def check_target_spec(name: str, spec) -> None:
     """Config problems in an endpoint block, as messages for the user."""
     from advassess.config import ConfigError
@@ -126,11 +134,11 @@ def validate_entry(i: int, atk: dict, cfg: dict) -> None:
                           "(endpoint, model, api_key_env)")
     check_target_spec("objective_target", p["objective_target"])
     for name in ("adversarial_target", "scoring_target"):
-        if p.get(name) is not None:
+        if p.get(name) is not None and not is_agent(p[name]):
             check_target_spec(name, p[name])
     if strategy in NEEDS_ATTACKER and p.get("adversarial_target") is None:
         raise ConfigError(f"attacks[{i}] ({strategy}) needs pyrit.adversarial_target: the attacker LLM that "
-                          "writes each turn")
+                          "writes each turn (or 'agent' to let the connected agent be the attacker)")
     objectives = atk.get("objectives", "default")
     if objectives != "default" and not (isinstance(objectives, list) and objectives
                                         and all(isinstance(o, str) and o.strip() for o in objectives)):
@@ -199,7 +207,9 @@ def _objectives(atk: dict) -> list[str]:
     return [x for x in base for _ in range(atk.get("repeats", DEFAULT_REPEATS))]
 
 
-def _same_model(a: dict | None, b: dict | None) -> bool:
+def _same_model(a, b) -> bool:
+    if not (isinstance(a, dict) and isinstance(b, dict)):
+        return False
     return bool(a and b and a.get("endpoint") == b.get("endpoint") and a.get("model") == b.get("model"))
 
 
@@ -212,7 +222,13 @@ def role_warnings(cfg: dict) -> list[str]:
     if _same_model(tgt, adv):
         out.append("The attacker model is the same as the model under test. Use a different and stronger attacker model; "
                    "a model attacking itself usually underestimates the risk.")
-    if adv and not _same_model(tgt, adv):
+    if is_agent(adv):
+        out.append("The attacker is the connected agent: results depend on its model's skill and willingness (it may refuse "
+                   "some objectives) and on its settings; make sure it is a capable model and not the model under test.")
+    if is_agent(judge):
+        out.append("The judge is the connected agent, " + ("which also wrote the attacks, so its verdicts are less independent; "
+                   if is_agent(adv) else "") + "read the transcripts before trusting the numbers.")
+    if isinstance(adv, dict) and not _same_model(tgt, adv):
         out.append(f"Attacker '{adv.get('model')}' must be stronger than the target '{(tgt or {}).get('model')}'; "
                    "this tool cannot check that, so confirm it. A weaker attacker gives a falsely safe result.")
     if _same_model(tgt, judge):
@@ -230,7 +246,7 @@ def _transcript(t: list[dict]) -> str:
 def run_entry(cfg: dict, atk: dict, index: int, work_dir: Path, n_examples: int) -> list[dict]:
     p, run = cfg["pyrit"], cfg["run"]
     for spec in (p.get("objective_target"), p.get("adversarial_target"), p.get("scoring_target")):
-        env = (spec or {}).get("api_key_env")
+        env = spec.get("api_key_env") if isinstance(spec, dict) else None
         if env and not os.environ.get(env):
             raise RuntimeError(f"Environment variable {env} is not set. Set it to your API key before running; "
                                "the key is never written to the config or reports.")
@@ -238,14 +254,26 @@ def run_entry(cfg: dict, atk: dict, index: int, work_dir: Path, n_examples: int)
     work_dir.mkdir(parents=True, exist_ok=True)
     strategy = atk["strategy"]
     scoring = atk.get("scoring") or {"type": "llm_judge"}
+    adversarial, judge = p.get("adversarial_target"), p.get("scoring_target")
+    if is_agent(adversarial) and judge is None:
+        judge = AGENT                      # no separate judge named: the agent judges too
+    if is_agent(adversarial) or is_agent(judge):
+        base = os.environ.get(BRIDGE_ENV)
+        if not base:
+            raise RuntimeError("adversarial_target / scoring_target 'agent' only works when the assessment is started "
+                               "through the MCP server (start_assessment), which connects PyRIT to the agent.")
+        if is_agent(adversarial):
+            adversarial = {"endpoint": f"{base}/adversarial/v1", "model": "agent"}
+        if is_agent(judge):
+            judge = {"endpoint": f"{base}/scoring/v1", "model": "agent"}
     job = {
         "strategy": strategy, "objectives": _objectives(atk), "max_turns": atk.get("max_turns", DEFAULT_MAX_TURNS),
         "tree_width": atk.get("tree_width", DEFAULT_TREE_WIDTH), "tree_branching": TAP_BRANCHING,
         "example_count": atk.get("example_count", DEFAULT_EXAMPLE_COUNT),
         "max_completion_tokens": p["max_completion_tokens"],
         "objective_target": p["objective_target"],
-        "adversarial_target": p.get("adversarial_target") if strategy in NEEDS_ATTACKER else None,
-        "scoring_target": p.get("scoring_target"), "scoring": scoring,
+        "adversarial_target": adversarial if strategy in NEEDS_ATTACKER else None,
+        "scoring_target": judge, "scoring": scoring,
     }
     stem = f"pyrit_{index:02d}_{strategy}"
     job_file, out_file = work_dir / f"{stem}.job.json", work_dir / f"{stem}.result.json"

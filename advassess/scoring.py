@@ -87,7 +87,7 @@ def annotate(row: dict) -> dict:
     """
     if row.get("error"):
         return row
-    unit = "attempts" if str(row.get("attack", "")).startswith("pyrit.") else "prompts"
+    unit = "attempts" if str(row.get("attack", "")).startswith(("pyrit.", "agent.")) else "prompts"
     raw = row.get("failed") or 0
     fp = row.get("suspected_false_positives") or 0
     effective = max(0, raw - fp)
